@@ -27,7 +27,7 @@ SDKCONFIG ?= boards/sdkconfig
 SDKCONFIG_H = $(BUILD)/sdkconfig.h
 
 # the git hash of the currently supported ESP IDF version
-ESPIDF_SUPHASH := 5c88c5996dbde6208e3bec05abc21ff6cd822d26
+ESPIDF_SUPHASH := 6b3da6b1882f3b72e904cc90be67e9c4e3f369a9
 
 # paths to ESP IDF and its components
 ifeq ($(ESPIDF),)
@@ -78,7 +78,10 @@ INC_ESPCOMP += -I$(ESPCOMP)/driver/include
 INC_ESPCOMP += -I$(ESPCOMP)/driver/include/driver
 INC_ESPCOMP += -I$(ESPCOMP)/nghttp/port/include
 INC_ESPCOMP += -I$(ESPCOMP)/nghttp/nghttp2/lib/includes
+INC_ESPCOMP += -I$(ESPCOMP)/efuse/include
+INC_ESPCOMP += -I$(ESPCOMP)/efuse/esp32/include
 INC_ESPCOMP += -I$(ESPCOMP)/esp32/include
+INC_ESPCOMP += -I$(ESPCOMP)/espcoredump/include
 INC_ESPCOMP += -I$(ESPCOMP)/soc/include
 INC_ESPCOMP += -I$(ESPCOMP)/soc/esp32/include
 INC_ESPCOMP += -I$(ESPCOMP)/ethernet/include
@@ -111,6 +114,7 @@ INC_ESPCOMP += -I$(ESPCOMP)/app_trace/include
 INC_ESPCOMP += -I$(ESPCOMP)/app_update/include
 INC_ESPCOMP += -I$(ESPCOMP)/pthread/include
 INC_ESPCOMP += -I$(ESPCOMP)/smartconfig_ack/include
+INC_ESPCOMP += -I$(ESPCOMP)/sdmmc/include
 
 # these flags are common to C and C++ compilation
 CFLAGS_COMMON = -Os -ffunction-sections -fdata-sections -fstrict-volatile-bitfields \
@@ -133,8 +137,9 @@ LDFLAGS += -u call_user_start_cpu0 -u uxTopUsedPriority -u ld_include_panic_high
 LDFLAGS += -u __cxa_guard_dummy # so that implementation of static guards is taken from cxx_guards.o instead of libstdc++.a
 LDFLAGS += -L$(ESPCOMP)/esp32/ld
 LDFLAGS += -T $(BUILD)/esp32_out.ld
-LDFLAGS += -T $(BUILD)/esp32.common.ld
+LDFLAGS += -T $(BUILD)/esp32.project.ld
 LDFLAGS += -T esp32.rom.ld
+LDFLAGS += -T esp32.rom.libgcc.ld
 LDFLAGS += -T esp32.peripherals.ld
 
 LIBGCC_FILE_NAME = $(shell $(CC) $(CFLAGS) -print-libgcc-file-name)
@@ -191,6 +196,7 @@ SRC_C = \
 	machine_wdt.c \
 	mpthreadport.c \
 	machine_rtc.c \
+	machine_sdcard.c \
 	$(SRC_MOD)
 
 EXTMOD_SRC_C = $(addprefix extmod/,\
@@ -209,7 +215,7 @@ LIB_SRC_C = $(addprefix lib/,\
 ifeq ($(MICROPY_FATFS), 1)
 LIB_SRC_C += \
 	lib/oofatfs/ff.c \
-	lib/oofatfs/option/unicode.c
+	lib/oofatfs/ffunicode.c
 endif
 
 DRIVERS_SRC_C = $(addprefix drivers/,\
@@ -250,25 +256,29 @@ $(HEADER_BUILD)/qstrdefs.generated.h: $(SDKCONFIG_H)
 ################################################################################
 # List of object files from the ESP32 IDF components
 
-ESPIDF_DRIVER_O = $(addprefix $(ESPCOMP)/driver/,\
-	uart.o \
-	periph_ctrl.o \
-	ledc.o \
-	gpio.o \
-	timer.o \
-	spi_master.o \
-	spi_common.o \
-	rtc_module.o \
+ESPIDF_DRIVER_O = $(subst .c,.o,$(wildcard $(ESPCOMP)/driver/*.c))
+
+ESPIDF_EFUSE_O = $(addprefix $(ESPCOMP)/efuse/,\
+	esp32/esp_efuse_table.o \
+	src/esp_efuse_api.o \
+	src/esp_efuse_utility.o \
 	)
 
 $(BUILD)/$(ESPCOMP)/esp32/dport_access.o: CFLAGS += -Wno-array-bounds
 ESPIDF_ESP32_O = $(addprefix $(ESPCOMP)/esp32/,\
 	brownout.o \
 	cache_sram_mmu.o \
+	coexist.o \
 	dbg_stubs.o \
+	dport_panic_highint_hdl.o \
+	esp_adapter.o \
 	esp_err_to_name.o \
+	esp_himem.o \
 	panic.o \
+	pm_trace.o \
 	reset_reason.o \
+	restore.o \
+	stack_check.o \
 	esp_timer.o \
 	esp_timer_esp32.o \
 	ets_timer_legacy.o \
@@ -277,7 +287,6 @@ ESPIDF_ESP32_O = $(addprefix $(ESPCOMP)/esp32/,\
 	task_wdt.o \
 	cache_err_int.o \
 	clk.o \
-	core_dump.o \
 	cpu_start.o \
 	gdbstub.o \
 	crosscore_int.o \
@@ -296,7 +305,6 @@ ESPIDF_ESP32_O = $(addprefix $(ESPCOMP)/esp32/,\
 	intr_alloc.o \
 	dport_access.o \
 	wifi_init.o \
-	wifi_os_adapter.o \
 	sleep_modes.o \
 	spiram.o \
 	spiram_psram.o \
@@ -322,6 +330,7 @@ ESPIDF_SOC_O = $(addprefix $(ESPCOMP)/soc/,\
 	esp32/rtc_sleep.o \
 	esp32/rtc_time.o \
 	esp32/rtc_wdt.o \
+	esp32/sdmmc_periph.o \
 	esp32/soc_memory_layout.o \
 	esp32/spi_periph.o \
 	src/memory_layout_utils.o \
@@ -362,6 +371,7 @@ $(BUILD)/$(ESPCOMP)/freertos/portasm.o: CFLAGS = $(CFLAGS_ASM)
 $(BUILD)/$(ESPCOMP)/freertos/xtensa_context.o: CFLAGS = $(CFLAGS_ASM)
 $(BUILD)/$(ESPCOMP)/freertos/xtensa_intr_asm.o: CFLAGS = $(CFLAGS_ASM)
 $(BUILD)/$(ESPCOMP)/freertos/xtensa_vectors.o: CFLAGS = $(CFLAGS_ASM)
+$(BUILD)/$(ESPCOMP)/freertos/xtensa_vector_defaults.o: CFLAGS = $(CFLAGS_ASM)
 $(BUILD)/$(ESPCOMP)/freertos/%.o: CFLAGS = $(CFLAGS_BASE) -I. -I$(BUILD) $(INC_ESPCOMP) -I$(ESPCOMP)/freertos/include/freertos -D_ESP_FREERTOS_INTERNAL
 ESPIDF_FREERTOS_O = $(addprefix $(ESPCOMP)/freertos/,\
 	croutine.o \
@@ -657,9 +667,19 @@ ESPIDF_WPA_SUPPLICANT_O = $(addprefix $(ESPCOMP)/wpa_supplicant/,\
 	port/os_xtensa.o \
 	)
 
+ESPIDF_SDMMC_O = $(addprefix $(ESPCOMP)/sdmmc/,\
+	sdmmc_cmd.o \
+	sdmmc_common.o \
+	sdmmc_init.o \
+	sdmmc_mmc.o \
+	sdmmc_sd.o \
+	sdmmc_io.o \
+	)
+
 OBJ_ESPIDF =
 OBJ_ESPIDF += $(addprefix $(BUILD)/, $(ESPIDF_NEWLIB_O))
 OBJ_ESPIDF += $(addprefix $(BUILD)/, $(ESPIDF_DRIVER_O))
+OBJ_ESPIDF += $(addprefix $(BUILD)/, $(ESPIDF_EFUSE_O))
 OBJ_ESPIDF += $(addprefix $(BUILD)/, $(ESPIDF_ESP32_O))
 OBJ_ESPIDF += $(addprefix $(BUILD)/, $(ESPIDF_ESP_RINGBUF_O))
 OBJ_ESPIDF += $(addprefix $(BUILD)/, $(ESPIDF_HEAP_O))
@@ -685,11 +705,13 @@ OBJ_ESPIDF += $(addprefix $(BUILD)/, $(ESPIDF_SMARTCONFIG_ACK_O))
 OBJ_ESPIDF += $(addprefix $(BUILD)/, $(ESPIDF_SPI_FLASH_O))
 OBJ_ESPIDF += $(addprefix $(BUILD)/, $(ESPIDF_ULP_O))
 OBJ_ESPIDF += $(addprefix $(BUILD)/, $(ESPIDF_WPA_SUPPLICANT_O))
+OBJ_ESPIDF += $(addprefix $(BUILD)/, $(ESPIDF_SDMMC_O))
 
 $(OBJ_ESPIDF): $(SDKCONFIG_H)
 
 LIB_ESPIDF =
 LIB_ESPIDF += driver
+LIB_ESPIDF += efuse
 LIB_ESPIDF += esp32
 LIB_ESPIDF += esp_ringbuf
 LIB_ESPIDF += heap
@@ -715,6 +737,7 @@ LIB_ESPIDF += ulp
 LIB_ESPIDF += lwip
 LIB_ESPIDF += mbedtls
 LIB_ESPIDF += wpa_supplicant
+LIB_ESPIDF += sdmmc
 
 BUILD_ESPIDF_LIB = $(BUILD)/esp-idf
 
@@ -730,6 +753,7 @@ $(BUILD_ESPIDF_LIB)/$(1)/lib$(1).a: $(addprefix $$(BUILD)/,$(2))
 endef
 
 $(eval $(call gen_espidf_lib_rule,driver,$(ESPIDF_DRIVER_O)))
+$(eval $(call gen_espidf_lib_rule,efuse,$(ESPIDF_EFUSE_O)))
 $(eval $(call gen_espidf_lib_rule,esp32,$(ESPIDF_ESP32_O)))
 $(eval $(call gen_espidf_lib_rule,esp_ringbuf,$(ESPIDF_ESP_RINGBUF_O)))
 $(eval $(call gen_espidf_lib_rule,heap,$(ESPIDF_HEAP_O)))
@@ -755,6 +779,7 @@ $(eval $(call gen_espidf_lib_rule,ulp,$(ESPIDF_ULP_O)))
 $(eval $(call gen_espidf_lib_rule,lwip,$(ESPIDF_LWIP_O)))
 $(eval $(call gen_espidf_lib_rule,mbedtls,$(ESPIDF_MBEDTLS_O)))
 $(eval $(call gen_espidf_lib_rule,wpa_supplicant,$(ESPIDF_WPA_SUPPLICANT_O)))
+$(eval $(call gen_espidf_lib_rule,sdmmc,$(ESPIDF_SDMMC_O)))
 
 LIB = $(foreach lib,$(LIB_ESPIDF),$(BUILD_ESPIDF_LIB)/$(lib)/lib$(lib).a)
 
@@ -776,7 +801,7 @@ $(eval $(foreach lib,$(LIB_ESPIDF),$(eval $(call gen_sections_info_rule,$(BUILD_
 $(LDGEN_SECTION_INFOS): $(LDGEN_SECTIONS_INFO) $(ESPIDF)/make/ldgen.mk
 	$(Q)printf "$(foreach info,$(LDGEN_SECTIONS_INFO),$(info)\n)" > $@
 
-$(BUILD)/esp32.common.ld: $(ESPCOMP)/esp32/ld/esp32.common.ld.in $(LDGEN_FRAGMENTS) $(SDKCONFIG) $(LDGEN_SECTION_INFOS)
+$(BUILD)/esp32.project.ld: $(ESPCOMP)/esp32/ld/esp32.project.ld.in $(LDGEN_FRAGMENTS) $(SDKCONFIG) $(LDGEN_SECTION_INFOS)
 	$(ECHO) "GEN $@"
 	$(Q)$(PYTHON) $(ESPIDF)/tools/ldgen/ldgen.py \
 		--input $< \
@@ -836,7 +861,7 @@ $(BUILD)/application.bin: $(BUILD)/application.elf
 	$(ECHO) "Create $@"
 	$(Q)$(ESPTOOL) --chip esp32 elf2image --flash_mode $(FLASH_MODE) --flash_freq $(FLASH_FREQ) --flash_size $(FLASH_SIZE) $<
 
-$(BUILD)/application.elf: $(OBJ) $(LIB) $(BUILD)/esp32_out.ld $(BUILD)/esp32.common.ld
+$(BUILD)/application.elf: $(OBJ) $(LIB) $(BUILD)/esp32_out.ld $(BUILD)/esp32.project.ld
 	$(ECHO) "LINK $@"
 	$(Q)$(LD) $(LDFLAGS) -o $@ $(APP_LD_ARGS)
 	$(Q)$(SIZE) $@
@@ -863,7 +888,7 @@ $(BUILD)/%.o: %.cpp
 BOOTLOADER_LIB_DIR = $(BUILD)/bootloader
 BOOTLOADER_LIB_ALL =
 
-$(BUILD)/bootloader/$(ESPCOMP)/%.o: CFLAGS += -DBOOTLOADER_BUILD=1 -I$(ESPCOMP)/bootloader_support/include_priv -I$(ESPCOMP)/bootloader_support/include -I$(ESPCOMP)/micro-ecc/micro-ecc -I$(ESPCOMP)/esp32 -Wno-error=format
+$(BUILD)/bootloader/$(ESPCOMP)/%.o: CFLAGS += -DBOOTLOADER_BUILD=1 -I$(ESPCOMP)/bootloader_support/include_priv -I$(ESPCOMP)/bootloader_support/include -I$(ESPCOMP)/micro-ecc/micro-ecc -I$(ESPCOMP)/efuse/include -I$(ESPCOMP)/esp32 -Wno-error=format
 
 # libbootloader_support.a
 BOOTLOADER_LIB_ALL += bootloader_support
@@ -875,7 +900,6 @@ BOOTLOADER_LIB_BOOTLOADER_SUPPORT_OBJ = $(addprefix $(BUILD)/bootloader/$(ESPCOM
 	bootloader_support/src/bootloader_random.o \
 	bootloader_support/src/bootloader_sha.o \
 	bootloader_support/src/bootloader_utility.o \
-	bootloader_support/src/efuse.o \
 	bootloader_support/src/flash_qio_mode.o \
 	bootloader_support/src/secure_boot_signatures.o \
 	bootloader_support/src/secure_boot.o \
@@ -914,16 +938,38 @@ $(BOOTLOADER_LIB_DIR)/libmicro-ecc.a: $(BOOTLOADER_LIB_MICRO_ECC_OBJ)
 	$(ECHO) "AR $@"
 	$(Q)$(AR) cr $@ $^
 
-# remaining object files
-BOOTLOADER_OBJ = $(addprefix $(BUILD)/bootloader/$(ESPCOMP)/,\
-	soc/esp32/rtc_clk.o \
-	soc/esp32/rtc_clk_init.o \
-	soc/esp32/rtc_init.o \
-	soc/esp32/rtc_time.o \
-	soc/esp32/rtc_wdt.o \
-	soc/esp32/cpu_util.o \
+# libsoc.a
+$(BUILD)/bootloader/$(ESPCOMP)/soc/esp32/rtc_clk.o: CFLAGS += -fno-jump-tables -fno-tree-switch-conversion
+BOOTLOADER_LIB_ALL += soc
+BOOTLOADER_LIB_SOC_OBJ = $(addprefix $(BUILD)/bootloader/$(ESPCOMP)/soc/,\
+	esp32/cpu_util.o \
+	esp32/gpio_periph.o \
+	esp32/rtc_clk.o \
+	esp32/rtc_clk_init.o \
+	esp32/rtc_init.o \
+	esp32/rtc_periph.o \
+	esp32/rtc_pm.o \
+	esp32/rtc_sleep.o \
+	esp32/rtc_time.o \
+	esp32/rtc_wdt.o \
+	esp32/sdio_slave_periph.o \
+	esp32/sdmmc_periph.o \
+	esp32/soc_memory_layout.o \
+	esp32/spi_periph.o \
+	src/memory_layout_utils.o \
+	)
+$(BOOTLOADER_LIB_DIR)/libsoc.a: $(BOOTLOADER_LIB_SOC_OBJ)
+	$(ECHO) "AR $@"
+	$(Q)$(AR) cr $@ $^
+
+# libmain.a
+BOOTLOADER_LIB_ALL += main
+BOOTLOADER_LIB_MAIN_OBJ = $(addprefix $(BUILD)/bootloader/$(ESPCOMP)/,\
 	bootloader/subproject/main/bootloader_start.o \
 	)
+$(BOOTLOADER_LIB_DIR)/libmain.a: $(BOOTLOADER_LIB_MAIN_OBJ)
+	$(ECHO) "AR $@"
+	$(Q)$(AR) cr $@ $^
 
 # all objects files
 BOOTLOADER_OBJ_ALL = \
@@ -931,7 +977,8 @@ BOOTLOADER_OBJ_ALL = \
 	$(BOOTLOADER_LIB_LOG_OBJ) \
 	$(BOOTLOADER_LIB_SPI_FLASH_OBJ) \
 	$(BOOTLOADER_LIB_MICRO_ECC_OBJ) \
-	$(BOOTLOADER_OBJ)
+	$(BOOTLOADER_LIB_SOC_OBJ) \
+	$(BOOTLOADER_LIB_MAIN_OBJ)
 
 $(BOOTLOADER_OBJ_ALL): $(SDKCONFIG_H)
 

@@ -72,6 +72,7 @@
 #include "stm32_it.h"
 #include "pendsv.h"
 #include "irq.h"
+#include "powerctrl.h"
 #include "pybthread.h"
 #include "gccollect.h"
 #include "extint.h"
@@ -144,7 +145,7 @@ int pyb_hard_fault_debug = 0;
 
 void HardFault_C_Handler(ExceptionRegisters_t *regs) {
     if (!pyb_hard_fault_debug) {
-        NVIC_SystemReset();
+        powerctrl_mcu_reset();
     }
 
     #if MICROPY_HW_ENABLE_USB
@@ -181,7 +182,7 @@ void HardFault_C_Handler(ExceptionRegisters_t *regs) {
     if ((void*)&_ram_start <= (void*)regs && (void*)regs < (void*)&_ram_end) {
         mp_hal_stdout_tx_str("Stack:\r\n");
         uint32_t *stack_top = &_estack;
-        if ((void*)regs < (void*)&_heap_end) {
+        if ((void*)regs < (void*)&_sstack) {
             // stack not in static stack area so limit the amount we print
             stack_top = (uint32_t*)regs + 32;
         }
@@ -329,13 +330,16 @@ STATIC void OTG_CMD_WKUP_Handler(PCD_HandleTypeDef *pcd_handle) {
     /* Reset SLEEPDEEP bit of Cortex System Control Register */
     SCB->SCR &= (uint32_t)~((uint32_t)(SCB_SCR_SLEEPDEEP_Msk | SCB_SCR_SLEEPONEXIT_Msk));
 
-    /* Configures system clock after wake-up from STOP: enable HSE, PLL and select
-    PLL as system clock source (HSE and PLL are disabled in STOP mode) */
+    /* Configures system clock after wake-up from STOP: enable HSE/HSI, PLL and select
+    PLL as system clock source (HSE/HSI and PLL are disabled in STOP mode) */
 
-    __HAL_RCC_HSE_CONFIG(MICROPY_HW_CLK_HSE_STATE);
+    __HAL_RCC_HSE_CONFIG(MICROPY_HW_RCC_HSE_STATE);
+    #if MICROPY_HW_CLK_USE_HSI
+    __HAL_RCC_HSI_ENABLE();
+    #endif
 
-    /* Wait till HSE is ready */
-    while(__HAL_RCC_GET_FLAG(RCC_FLAG_HSERDY) == RESET)
+    /* Wait till HSE/HSI is ready */
+    while(__HAL_RCC_GET_FLAG(MICROPY_HW_RCC_FLAG_HSxRDY) == RESET)
     {}
 
     /* Enable the main PLL. */
@@ -374,8 +378,10 @@ void OTG_FS_WKUP_IRQHandler(void) {
 
   OTG_CMD_WKUP_Handler(&pcd_fs_handle);
 
+  #if !defined(STM32H7)
   /* Clear EXTI pending Bit*/
   __HAL_USB_FS_EXTI_CLEAR_FLAG();
+  #endif
 
     IRQ_EXIT(OTG_FS_WKUP_IRQn);
 }
@@ -509,8 +515,18 @@ void RTC_WKUP_IRQHandler(void) {
 
 void RTC_IRQHandler(void) {
     IRQ_ENTER(RTC_IRQn);
-    RTC->ISR &= ~RTC_ISR_WUTF; // clear wakeup interrupt flag
-    Handle_EXTI_Irq(EXTI_RTC_WAKEUP); // clear EXTI flag and execute optional callback
+    if (RTC->ISR & RTC_ISR_WUTF) {
+        RTC->ISR &= ~RTC_ISR_WUTF; // clear wakeup interrupt flag
+        Handle_EXTI_Irq(EXTI_RTC_WAKEUP); // clear EXTI flag and execute optional callback
+    }
+    if (RTC->ISR & RTC_ISR_ALRAF) {
+        RTC->ISR &= ~RTC_ISR_ALRAF; // clear Alarm A flag
+        Handle_EXTI_Irq(EXTI_RTC_ALARM); // clear EXTI flag and execute optional callback
+    }
+    if (RTC->ISR & RTC_ISR_TSF) {
+        RTC->ISR &= ~RTC_ISR_TSF; // clear timestamp flag
+        Handle_EXTI_Irq(EXTI_RTC_TIMESTAMP); // clear EXTI flag and execute optional callback
+    }
     IRQ_EXIT(RTC_IRQn);
 }
 
@@ -722,7 +738,7 @@ void USART6_IRQHandler(void) {
     IRQ_EXIT(USART6_IRQn);
 }
 
-#if defined(UART8)
+#if defined(UART7)
 void UART7_IRQHandler(void) {
     IRQ_ENTER(UART7_IRQn);
     uart_irq_handler(7);
@@ -735,6 +751,22 @@ void UART8_IRQHandler(void) {
     IRQ_ENTER(UART8_IRQn);
     uart_irq_handler(8);
     IRQ_EXIT(UART8_IRQn);
+}
+#endif
+
+#if defined(UART9)
+void UART9_IRQHandler(void) {
+    IRQ_ENTER(UART9_IRQn);
+    uart_irq_handler(9);
+    IRQ_EXIT(UART9_IRQn);
+}
+#endif
+
+#if defined(UART10)
+void UART10_IRQHandler(void) {
+    IRQ_ENTER(UART10_IRQn);
+    uart_irq_handler(10);
+    IRQ_EXIT(UART10_IRQn);
 }
 #endif
 
@@ -777,6 +809,26 @@ void CAN2_SCE_IRQHandler(void) {
     IRQ_ENTER(CAN2_SCE_IRQn);
     can_sce_irq_handler(PYB_CAN_2);
     IRQ_EXIT(CAN2_SCE_IRQn);
+}
+#endif
+
+#if defined(MICROPY_HW_CAN3_TX)
+void CAN3_RX0_IRQHandler(void) {
+    IRQ_ENTER(CAN3_RX0_IRQn);
+    can_rx_irq_handler(PYB_CAN_3, CAN_FIFO0);
+    IRQ_EXIT(CAN3_RX0_IRQn);
+}
+
+void CAN3_RX1_IRQHandler(void) {
+    IRQ_ENTER(CAN3_RX1_IRQn);
+    can_rx_irq_handler(PYB_CAN_3, CAN_FIFO1);
+    IRQ_EXIT(CAN3_RX1_IRQn);
+}
+
+void CAN3_SCE_IRQHandler(void) {
+    IRQ_ENTER(CAN3_SCE_IRQn);
+    can_sce_irq_handler(PYB_CAN_3);
+    IRQ_EXIT(CAN3_SCE_IRQn);
 }
 #endif
 

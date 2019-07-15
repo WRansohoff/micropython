@@ -111,9 +111,9 @@ soft_reset:
 
     // run boot-up scripts
     pyexec_frozen_module("_boot.py");
-    pyexec_file("boot.py");
+    pyexec_file_if_exists("boot.py");
     if (pyexec_mode_kind == PYEXEC_MODE_FRIENDLY_REPL) {
-        pyexec_file("main.py");
+        pyexec_file_if_exists("main.py");
     }
 
     for (;;) {
@@ -138,7 +138,7 @@ soft_reset:
 
     gc_sweep_all();
 
-    mp_hal_stdout_tx_str("PYB: soft reboot\r\n");
+    mp_hal_stdout_tx_str("MPY: soft reboot\r\n");
 
     // deinitialise peripherals
     machine_pins_deinit();

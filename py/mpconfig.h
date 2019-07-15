@@ -28,7 +28,7 @@
 
 // Current version of MicroPython
 #define MICROPY_VERSION_MAJOR 1
-#define MICROPY_VERSION_MINOR 10
+#define MICROPY_VERSION_MINOR 11
 #define MICROPY_VERSION_MICRO 0
 
 // Combined version as a 32-bit number for convenience
@@ -329,6 +329,9 @@
 // Convenience definition for whether any inline assembler emitter is enabled
 #define MICROPY_EMIT_INLINE_ASM (MICROPY_EMIT_INLINE_THUMB || MICROPY_EMIT_INLINE_XTENSA)
 
+// Convenience definition for whether any native or inline assembler emitter is enabled
+#define MICROPY_EMIT_MACHINE_CODE (MICROPY_EMIT_NATIVE || MICROPY_EMIT_INLINE_ASM)
+
 /*****************************************************************************/
 /* Compiler configuration                                                    */
 
@@ -338,6 +341,7 @@
 #endif
 
 // Whether the compiler is dynamically configurable (ie at runtime)
+// This will disable the ability to execute native/viper code
 #ifndef MICROPY_DYNAMIC_COMPILER
 #define MICROPY_DYNAMIC_COMPILER (0)
 #endif
@@ -354,6 +358,11 @@
 // Whether to enable constant folding; eg 1+2 rewritten as 3
 #ifndef MICROPY_COMP_CONST_FOLDING
 #define MICROPY_COMP_CONST_FOLDING (1)
+#endif
+
+// Whether to enable optimisations for constant literals, eg OrderedDict
+#ifndef MICROPY_COMP_CONST_LITERAL
+#define MICROPY_COMP_CONST_LITERAL (1)
 #endif
 
 // Whether to enable lookup of constants in modules; eg module.CONST
@@ -407,6 +416,11 @@
 // Whether to enable all debugging outputs (it will be extremely verbose)
 #ifndef MICROPY_DEBUG_VERBOSE
 #define MICROPY_DEBUG_VERBOSE (0)
+#endif
+
+// Whether to enable debugging versions of MP_OBJ_NULL/STOP_ITERATION/SENTINEL
+#ifndef MICROPY_DEBUG_MP_OBJ_SENTINELS
+#define MICROPY_DEBUG_MP_OBJ_SENTINELS (0)
 #endif
 
 // Whether to enable a simple VM stack overflow check
@@ -846,6 +860,11 @@ typedef double mp_float_t;
 #define MICROPY_PY_BUILTINS_MEMORYVIEW (0)
 #endif
 
+// Whether to support memoryview.itemsize attribute
+#ifndef MICROPY_PY_BUILTINS_MEMORYVIEW_ITEMSIZE
+#define MICROPY_PY_BUILTINS_MEMORYVIEW_ITEMSIZE (0)
+#endif
+
 // Whether to support set object
 #ifndef MICROPY_PY_BUILTINS_SET
 #define MICROPY_PY_BUILTINS_SET (1)
@@ -1271,6 +1290,11 @@ typedef double mp_float_t;
 #define MICROPY_PY_UCRYPTOLIB (0)
 #endif
 
+// Depends on MICROPY_PY_UCRYPTOLIB
+#ifndef MICROPY_PY_UCRYPTOLIB_CTR
+#define MICROPY_PY_UCRYPTOLIB_CTR (0)
+#endif
+
 #ifndef MICROPY_PY_UCRYPTOLIB_CONSTS
 #define MICROPY_PY_UCRYPTOLIB_CONSTS (0)
 #endif
@@ -1316,8 +1340,8 @@ typedef double mp_float_t;
 #define MICROPY_PY_USSL_FINALISER (0)
 #endif
 
-#ifndef MICROPY_PY_WEBSOCKET
-#define MICROPY_PY_WEBSOCKET (0)
+#ifndef MICROPY_PY_UWEBSOCKET
+#define MICROPY_PY_UWEBSOCKET (0)
 #endif
 
 #ifndef MICROPY_PY_FRAMEBUF

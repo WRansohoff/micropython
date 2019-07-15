@@ -450,7 +450,7 @@ friendly_repl_reset:
             // do the user a favor and reenable interrupts.
             if (query_irq() == IRQ_STATE_DISABLED) {
                 enable_irq(IRQ_STATE_ENABLED);
-                mp_hal_stdout_tx_str("PYB: enabling IRQs\r\n");
+                mp_hal_stdout_tx_str("MPY: enabling IRQs\r\n");
             }
         }
         #endif
@@ -539,6 +539,18 @@ friendly_repl_reset:
 
 int pyexec_file(const char *filename) {
     return parse_compile_execute(filename, MP_PARSE_FILE_INPUT, EXEC_FLAG_SOURCE_IS_FILENAME);
+}
+
+int pyexec_file_if_exists(const char *filename) {
+    #if MICROPY_MODULE_FROZEN
+    if (mp_frozen_stat(filename) == MP_IMPORT_STAT_FILE) {
+        return pyexec_frozen_module(filename);
+    }
+    #endif
+    if (mp_import_stat(filename) != MP_IMPORT_STAT_FILE) {
+        return 1; // success (no file is the same as an empty file executing without fail)
+    }
+    return pyexec_file(filename);
 }
 
 #if MICROPY_MODULE_FROZEN
